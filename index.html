@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sebroa</title>
+<meta name="description" content="sebroa.com">
+<meta name="theme-color" content="#050505">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23050505'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='1.6'%3E%3Cpath d='M5 20c4-6 8-6 11-2s7 4 11-2' opacity='.45'/%3E%3Cpath d='M5 14c4-6 8-6 11-2s7 4 11-2'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@200;400&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; background:#050505; color:#f2f2f2; overflow:hidden; touch-action:none; }
+  body { font-family:"Inter Tight", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .mark { position:fixed; left:clamp(20px,5vw,72px); bottom:clamp(24px,7vh,80px); pointer-events:none; user-select:none; transition:opacity .8s ease; }
+  .mark h1 { font-weight:200; letter-spacing:-0.03em; line-height:.9; font-size:clamp(56px,13vw,200px); }
+  .small { font-weight:400; font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:#8a8a8a; }
+  .mark p { margin-top:14px; }
+  #play { position:fixed; right:clamp(20px,5vw,72px); bottom:calc(clamp(24px,7vh,80px) + clamp(40px,7vw,100px));
+          display:flex; align-items:center; gap:12px; background:none; border:0; cursor:pointer;
+          font-family:inherit; color:#d6d6d6; padding:6px 0; transition:color .3s, opacity .8s; }
+  #play .ring { width:46px; height:46px; border:1px solid rgba(242,242,242,.6); border-radius:50%;
+                display:grid; place-items:center; transition:background .3s, border-color .3s;
+                animation:breathe 3s ease-in-out infinite; }
+  #play .ring svg { width:14px; height:14px; margin-left:3px; fill:currentColor; }
+  #play:hover, #play:focus-visible { color:#050505; outline:none; }
+  #play:hover .ring, #play:focus-visible .ring { background:#f2f2f2; border-color:#f2f2f2; }
+  #play:hover .label, #play:focus-visible .label { color:#f2f2f2; }
+  @keyframes breathe { 0%,100% { box-shadow:0 0 0 0 rgba(242,242,242,.25); } 50% { box-shadow:0 0 0 10px rgba(242,242,242,0); } }
+  @media (prefers-reduced-motion: reduce) { #play .ring { animation:none; } }
+  #intro { position:fixed; left:50%; top:clamp(70px,16vh,160px); transform:translateX(-50%); width:min(92vw,640px);
+           text-align:center; opacity:0; pointer-events:none; transition:opacity .7s; }
+  #intro h3 { font-weight:200; letter-spacing:-0.02em; font-size:clamp(30px,5vw,56px); line-height:1.05; margin-bottom:14px; }
+  #intro .small { line-height:1.9; }
+  #intro, #msg, #hud { text-shadow:0 0 12px #050505, 0 0 24px #050505, 0 0 4px #050505; }
+  body.intro #intro { opacity:1; }
+  #hud { position:fixed; left:clamp(20px,5vw,72px); top:clamp(20px,5vh,48px); opacity:0; transition:opacity .6s; pointer-events:none; }
+  #msg { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+         opacity:0; pointer-events:none; transition:opacity .5s; text-align:center; padding:0 20px; }
+  #msg h2 { font-weight:200; letter-spacing:-0.03em; font-size:clamp(44px,9vw,120px); line-height:.95; }
+  body.playing .mark, body.playing #play { opacity:0; pointer-events:none; }
+  body.playing #hud { opacity:1; }
+  body.over #msg { opacity:1; }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+<div class="mark"><h1>sebroa</h1><p class="small">Stockholm</p></div>
+<button id="play" type="button" aria-label="Play the blob game"><span class="small label">Play</span><span class="ring"><svg viewBox="0 0 10 12" aria-hidden="true"><path d="M0 0l10 6-10 6z"/></svg></span></button>
+<div id="intro"><h3>Eat or be eaten.</h3><p class="small" id="introSub"></p></div>
+<div id="hud" class="small"></div>
+<div id="msg"><h2 id="msgTitle">eaten</h2><p class="small" id="msgSub"></p></div>
+<script>
+(() => {
+  // ---- 3D simplex noise (public-domain algorithm by Stefan Gustavson) ----
+  const perm = new Uint8Array(512);
+  { const p = new Uint8Array(256); for (let i = 0; i < 256; i++) p[i] = i;
+    let s = 1337; for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
+    for (let i = 0; i < 512; i++) perm[i] = p[i & 255]; }
+  const G = [1,1,0,-1,1,0,1,-1,0,-1,-1,0,1,0,1,-1,0,1,1,0,-1,-1,0,-1,0,1,1,0,-1,1,0,1,-1,0,-1,-1];
+  function noise(x, y, z) {
+    const F = 1/3, Gc = 1/6, s = (x + y + z) * F;
+    const i = Math.floor(x + s), j = Math.floor(y + s), k = Math.floor(z + s);
+    const t = (i + j + k) * Gc, x0 = x - i + t, y0 = y - j + t, z0 = z - k + t;
+    let i1,j1,k1,i2,j2,k2;
+    if (x0 >= y0) { if (y0 >= z0) {i1=1;j1=0;k1=0;i2=1;j2=1;k2=0;} else if (x0 >= z0) {i1=1;j1=0;k1=0;i2=1;j2=0;k2=1;} else {i1=0;j1=0;k1=1;i2=1;j2=0;k2=1;} }
+    else { if (y0 < z0) {i1=0;j1=0;k1=1;i2=0;j2=1;k2=1;} else if (x0 < z0) {i1=0;j1=1;k1=0;i2=0;j2=1;k2=1;} else {i1=0;j1=1;k1=0;i2=1;j2=1;k2=0;} }
+    const pts = [[x0,y0,z0,0,0,0],[x0-i1+Gc,y0-j1+Gc,z0-k1+Gc,i1,j1,k1],[x0-i2+2*Gc,y0-j2+2*Gc,z0-k2+2*Gc,i2,j2,k2],[x0-.5,y0-.5,z0-.5,1,1,1]];
+    const ii = i & 255, jj = j & 255, kk = k & 255; let n = 0;
+    for (const [px,py,pz,a,b,c] of pts) {
+      let tt = 0.6 - px*px - py*py - pz*pz; if (tt < 0) continue;
+      const g = (perm[ii + a + perm[jj + b + perm[kk + c]]] % 12) * 3;
+      tt *= tt; n += tt * tt * (G[g]*px + G[g+1]*py + G[g+2]*pz);
+    }
+    return 32 * n;
+  }
+
+  const $ = id => document.getElementById(id);
+  const c = $('field'), ctx = c.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const SPEED = reduce ? 0.5 : 1;
+  const LEVELS = 14;
+  let W, H, dpr, cell, nx, ny, vals;
+  const pointer = { x: 0, y: 0, tx: 0, ty: 0, active: false, strength: 0 };
+  const drops = [];
+
+  // ---------------- game state ----------------
+  const game = { on: false, over: false, player: null, bots: [], pellets: [], best: 0, lastT: 0, respawnAt: 0 };
+  try { game.best = +localStorage.getItem('sebroa-best') || 0; } catch (e) {}
+  const BOTS = 60, PELLETS = 80;
+  const touch = matchMedia('(pointer: coarse)').matches;
+  const keys = new Set();
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const massOf = r => Math.round(r * r / 10);
+
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    c.width = W * dpr; c.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cell = W < 600 ? 9 : 11;
+    nx = Math.ceil(W / cell) + 1; ny = Math.ceil(H / cell) + 1;
+    vals = new Float32Array(nx * ny);
+    if (!pointer.active) { pointer.x = pointer.tx = W * 0.62; pointer.y = pointer.ty = H * 0.4; }
+  }
+
+  function spawnBot(awayFrom, newborn) {
+    const p = game.player, pr = p ? p.r : 9;
+    // mostly snacks; a few threats, never more than ~1.8x your size
+    const r = newborn ? 4 : Math.random() < 0.75 ? rand(4, Math.max(5, pr * 0.9)) : rand(pr * 1.15, pr * 1.8);
+    let x, y, tries = 0;
+    do { x = rand(r, W - r); y = rand(r, H - r); tries++; }
+    while (awayFrom && Math.hypot(x - awayFrom.x, y - awayFrom.y) < 220 + r && tries < 40);
+    game.bots.push({ x, y, r: Math.max(4, r), a: rand(0, 6.28), seed: rand(0, 100) });
+  }
+  const spawnPellet = () => game.pellets.push({ x: rand(6, W - 6), y: rand(6, H - 6), r: 3, ph: rand(0, 6.28) });
+  const shooters = [];
+  function drawShooters(t, dt) {
+    if (Math.random() < dt / 3.5 && shooters.length < 2) {   // roughly one every 3–4 s
+      const a = rand(0.25, 0.6) + (Math.random() < 0.5 ? 0 : Math.PI - 0.85);
+      shooters.push({ x: rand(0, W), y: rand(-20, H * 0.4), a, v: rand(700, 1100), len: rand(90, 170), born: t, life: rand(0.6, 1.1) });
+    }
+    for (let k = shooters.length - 1; k >= 0; k--) {
+      const s = shooters[k], age = t - s.born;
+      if (age > s.life) { shooters.splice(k, 1); continue; }
+      const hx = s.x + Math.cos(s.a) * s.v * age, hy = s.y + Math.sin(s.a) * s.v * age;
+      const tx = hx - Math.cos(s.a) * s.len, ty = hy - Math.sin(s.a) * s.len;
+      const fade = Math.sin(Math.PI * age / s.life);
+      const g = ctx.createLinearGradient(hx, hy, tx, ty);
+      g.addColorStop(0, `rgba(242,242,242,${0.85 * fade})`); g.addColorStop(1, 'rgba(242,242,242,0)');
+      ctx.strokeStyle = g; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(tx, ty); ctx.stroke();
+    }
+  }
+
+  function startGame() {
+    game.on = true; game.over = false; game.startT = performance.now() / 1000;
+    game.player = { x: W / 2, y: H / 2, r: 9 };
+    pointer.tx = W / 2; pointer.ty = H / 2;
+    game.bots = []; game.pellets = [];
+    for (let i = 0; i < BOTS; i++) spawnBot(game.player);
+    for (let i = 0; i < PELLETS; i++) spawnPellet();
+    document.body.classList.add('playing', 'intro'); document.body.classList.remove('over');
+    $('introSub').innerHTML = (touch ? 'Drag your finger' : 'Use the arrow keys or your mouse') +
+      ' to gobble up the smaller blobs<br>like the last kanelbulle at fika.<br>Steer clear of the double rings.';
+    clearTimeout(game.introTimer);
+    game.introTimer = setTimeout(() => document.body.classList.remove('intro'), 4500);
+  }
+  function endGame(won) {
+    game.over = true;
+    const m = massOf(game.player.r);
+    if (m > game.best) { game.best = m; try { localStorage.setItem('sebroa-best', m); } catch (e) {} }
+    $('msgTitle').textContent = won ? 'archipelago conquered' : 'eaten';
+    $('msgSub').textContent = `mass ${m} · best ${game.best} · click to play again · esc to leave`;
+    document.body.classList.add('over'); document.body.classList.remove('intro');
+  }
+  function leaveGame() {
+    game.on = false; game.over = false;
+    document.body.classList.remove('playing', 'over', 'intro');
+  }
+
+  const speedFor = r => 250 * Math.pow(9 / r, 0.6);          // you: quick when small, slower as you grow
+  const botSpeed = r => 150 * Math.pow(9 / r, 0.8);          // same rule for the others
+
+  function step(dt, t) {
+    const p = game.player, all = [p, ...game.bots];
+    if (!game.over) {
+      // player follows the pointer / finger
+      const kx = (keys.has('ArrowRight') || keys.has('d')) - (keys.has('ArrowLeft') || keys.has('a'));
+      const ky = (keys.has('ArrowDown') || keys.has('s')) - (keys.has('ArrowUp') || keys.has('w'));
+      if (kx || ky) {                       // arrow keys (or WASD)
+        const l = Math.hypot(kx, ky), m = speedFor(p.r) * dt;
+        p.x += kx / l * m; p.y += ky / l * m;
+        pointer.tx = p.x; pointer.ty = p.y; // so the mouse doesn't pull you back
+      } else {                              // mouse / finger
+        const dx = pointer.tx - p.x, dy = pointer.ty - p.y, d = Math.hypot(dx, dy);
+        if (d > 1) { const m = Math.min(d, speedFor(p.r) * dt); p.x += dx / d * m; p.y += dy / d * m; }
+      }
+    }
+    // bots: flee bigger, chase smaller, otherwise wander
+    for (const b of game.bots) {
+      let tx = 0, ty = 0, best = Infinity, mode = 0;
+      for (const o of all) {
+        if (o === b || (o === p && game.over)) continue;
+        const dx = o.x - b.x, dy = o.y - b.y, dist = Math.hypot(dx, dy) - o.r - b.r;
+        if (o.r > b.r * 1.12 && dist < (o === p ? 100 : 120) && dist < best) { best = dist; tx = -dx; ty = -dy; mode = 2; }
+        else if (mode < 2 && b.r > o.r * 1.12 && dist < 170 && dist < best) { best = dist; tx = dx; ty = dy; mode = 1; }
+      }
+      if (mode === 0) {
+        b.a += (noise(b.seed, t * 0.3, 0) * 2.2) * dt;
+        tx = Math.cos(b.a); ty = Math.sin(b.a);
+      }
+      const l = Math.hypot(tx, ty) || 1, v = botSpeed(b.r) * (mode === 0 ? 0.3 : mode === 1 ? 0.45 : 0.45) * dt;
+      b.x += tx / l * v; b.y += ty / l * v;
+      if (b.x < b.r || b.x > W - b.r) b.a = Math.PI - b.a;
+      if (b.y < b.r || b.y > H - b.r) b.a = -b.a;
+    }
+    for (const e of all) { e.x = Math.min(W - e.r, Math.max(e.r, e.x)); e.y = Math.min(H - e.r, Math.max(e.r, e.y)); }
+
+    // pellets
+    for (let i = game.pellets.length - 1; i >= 0; i--) {
+      const f = game.pellets[i];
+      for (const e of all) {
+        if (e === p && game.over) continue;
+        if (Math.hypot(f.x - e.x, f.y - e.y) < e.r) { e.r = Math.sqrt(e.r * e.r + 5); game.pellets.splice(i, 1); break; }
+      }
+    }
+    while (game.pellets.length < PELLETS) spawnPellet();
+
+    // blobs eat blobs
+    for (const a of all) for (const b of all) {
+      if (a === b || a.dead || b.dead) continue;
+      const need = a === p ? 1.08 : 1.12;               // you can eat anything slightly smaller
+      if (a.r < b.r * need) continue;
+      if ((a === p || b === p) && (game.over || t - game.startT < 3)) continue; // 3 s of spawn protection
+      const reach = a === p ? a.r : a.r - b.r * 0.35; // you only need to touch them
+      if (Math.hypot(a.x - b.x, a.y - b.y) < reach) {
+        a.r = Math.sqrt(a.r * a.r + b.r * b.r * 0.67); b.dead = true; // eater keeps two thirds of the mass
+        drops.push({ x: b.x, y: b.y, born: t });
+      }
+    }
+    if (p.dead && !game.over) endGame(false);
+    game.bots = game.bots.filter(b => !b.dead);
+    if (game.bots.length < BOTS && t > game.respawnAt) { spawnBot(p, true); game.respawnAt = t + 0.8; } // newborns start tiny and must eat to grow
+    if (!game.over && p.r > Math.min(W, H) * 0.24) endGame(true);
+
+    $('hud').textContent = `mass ${massOf(p.r)} · best ${game.best} · esc to leave`;
+  }
+
+  // ---------------- terrain ----------------
+  function base(x, y, t) {
+    const s = 0.0023, tt = t * SPEED, drift = tt * 7;
+    let v = noise((x + drift) * s, y * s, tt * 0.07) * 0.75 + noise((x - drift * 0.6) * s * 2.3, y * s * 2.3, tt * 0.1 + 9) * 0.25;
+    const dx = x - pointer.x, dy = y - pointer.y;
+    v += Math.exp(-(dx*dx + dy*dy) / 26000) * 0.9 * pointer.strength;
+    for (const d of drops) {
+      const age = t - d.born, r = Math.hypot(x - d.x, y - d.y);
+      v += Math.sin((r - age * 160) * 0.045) * Math.exp(-((r - age * 160) ** 2) / 9000) * (game.on ? 0.12 : 0.25) * Math.max(0, 1 - age / 4);
+    }
+    return v;
+  }
+  // every blob is a little hill, so contour rings form around it
+  function addHill(bx, by, r, amp) {
+    const sg = r * 0.9 + 6, R = sg * 3, k = 1 / (2 * sg * sg);
+    const i0 = Math.max(0, Math.floor((bx - R) / cell)), i1 = Math.min(nx - 1, Math.ceil((bx + R) / cell));
+    const j0 = Math.max(0, Math.floor((by - R) / cell)), j1 = Math.min(ny - 1, Math.ceil((by + R) / cell));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const dx = i * cell - bx, dy = j * cell - by;
+      vals[j * nx + i] += amp * Math.exp(-(dx*dx + dy*dy) * k);
+    }
+  }
+
+  const lerp = (a, b, l) => (l - a) / (b - a);
+
+  function contours(calm) {
+    // calm: 0 = landing page, 1 = in game (fewer, thinner, fainter lines)
+    if (calm > 0.99) return;               // in game: no map at all, just the starfield
+    ctx.lineWidth = 1;
+    for (let L = 0; L < LEVELS; L++) {
+      const lv = -0.9 + (L / (LEVELS - 1)) * 1.8;
+      ctx.beginPath();
+      for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+        const a = vals[j*nx+i], b = vals[j*nx+i+1], cc = vals[(j+1)*nx+i+1], d = vals[(j+1)*nx+i];
+        const idx = (a > lv) | ((b > lv) << 1) | ((cc > lv) << 2) | ((d > lv) << 3);
+        if (idx === 0 || idx === 15) continue;
+        const x = i * cell, y = j * cell;
+        const T = [x + lerp(a, b, lv) * cell, y], R = [x + cell, y + lerp(b, cc, lv) * cell],
+              B = [x + lerp(d, cc, lv) * cell, y + cell], Lf = [x, y + lerp(a, d, lv) * cell];
+        const seg = (p, q) => { ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); };
+        switch (idx) {
+          case 1: case 14: seg(Lf, T); break;
+          case 2: case 13: seg(T, R); break;
+          case 3: case 12: seg(Lf, R); break;
+          case 4: case 11: seg(R, B); break;
+          case 6: case 9: seg(T, B); break;
+          case 7: case 8: seg(Lf, B); break;
+          case 5: seg(Lf, T); seg(R, B); break;
+          case 10: seg(T, R); seg(Lf, B); break;
+        }
+      }
+      ctx.strokeStyle = `rgba(242,242,242,${(L % 4 === 0 ? 0.55 : 0.28) * (1 - calm)})`;
+      ctx.stroke();
+    }
+  }
+
+  function drawBlobs() {
+    const p = game.player;
+    const tw = performance.now() / 1000;
+    for (const f of game.pellets) {                           // the food doubles as a twinkling starfield
+      ctx.fillStyle = `rgba(242,242,242,${0.4 + 0.3 * Math.sin(tw * 1.7 + f.ph)})`;
+      ctx.fillRect(f.x - 1.5, f.y - 1.5, 3, 3);
+    }
+    for (const b of game.bots) {
+      const danger = b.r > p.r * 1.12;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.2832);
+      ctx.fillStyle = danger ? 'rgba(5,5,5,0.85)' : 'rgba(242,242,242,0.08)'; ctx.fill();
+      ctx.lineWidth = danger ? 1.6 : 1; ctx.strokeStyle = danger ? 'rgba(242,242,242,0.95)' : 'rgba(242,242,242,0.5)'; ctx.stroke();
+      if (danger) { ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.62, 0, 6.2832); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(242,242,242,0.45)'; ctx.stroke(); }
+    }
+    if (!p.dead) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.2832);
+      ctx.fillStyle = 'rgba(242,242,242,0.94)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 5, 0, 6.2832);
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(242,242,242,0.35)'; ctx.stroke();
+    }
+  }
+
+  function draw(ms) {
+    const t = ms / 1000, dt = Math.min(0.05, t - (game.lastT || t)); game.lastT = t;
+    if (game.on) {
+      step(dt, t);
+      const p = game.player;
+      pointer.x += ((p.dead ? W / 2 : p.x) - pointer.x) * 0.1;  // spotlight follows your blob
+      pointer.y += ((p.dead ? H / 2 : p.y) - pointer.y) * 0.1;
+      pointer.strength += (0 - pointer.strength) * 0.05;
+    } else {
+      pointer.x += (pointer.tx - pointer.x) * 0.1;
+      pointer.y += (pointer.ty - pointer.y) * 0.1;
+      pointer.strength += ((pointer.active ? 1 : 0.35) - pointer.strength) * 0.03;
+      if (!pointer.active) {
+        pointer.tx = W * (0.55 + 0.25 * Math.sin(t * 0.13));
+        pointer.ty = H * (0.40 + 0.20 * Math.cos(t * 0.11));
+      }
+    }
+    for (let k = drops.length - 1; k >= 0; k--) if (t - drops[k].born > 4) drops.splice(k, 1);
+
+    if ((game.calm || 0) < 0.99)
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) vals[j * nx + i] = base(i * cell, j * cell, t);
+
+    ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, W, H);
+    game.calm = (game.calm || 0) + ((game.on ? 1 : 0) - (game.calm || 0)) * 0.06;
+    contours(game.calm);
+
+    const g = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, Math.max(W, H) * (game.on ? 0.7 : 0.55));
+    g.addColorStop(0, 'rgba(5,5,5,0)');
+    g.addColorStop(0.35, `rgba(5,5,5,${game.on ? 0.2 : 0.35})`);
+    g.addColorStop(1, `rgba(5,5,5,${game.on ? 0.7 : 0.88})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    if (game.on) { drawShooters(t, dt); drawBlobs(); }
+    requestAnimationFrame(draw);
+  }
+
+  addEventListener('resize', resize);
+  addEventListener('pointermove', e => { pointer.active = true; pointer.tx = e.clientX; pointer.ty = e.clientY; });
+  document.addEventListener('pointerleave', () => { pointer.active = false; });
+  addEventListener('pointerdown', e => {
+    if (e.target.id === 'play') return;
+    pointer.tx = e.clientX; pointer.ty = e.clientY;
+    if (game.over) { startGame(); return; }
+    if (!game.on) drops.push({ x: e.clientX, y: e.clientY, born: performance.now() / 1000 });
+  });
+  $('play').addEventListener('click', e => { e.stopPropagation(); e.currentTarget.blur(); startGame(); });
+  const steer = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d'];
+  addEventListener('keyup', e => keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key));
+  addEventListener('blur', () => keys.clear());
+  addEventListener('keydown', e => {
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (game.on && steer.includes(k)) { e.preventDefault(); keys.add(k); return; }
+    if (e.key === 'Escape' && game.on) leaveGame();
+    else if ((e.key === ' ' || e.key === 'Enter') && (!game.on || game.over)) { e.preventDefault(); startGame(); }
+  });
+
+  resize();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
